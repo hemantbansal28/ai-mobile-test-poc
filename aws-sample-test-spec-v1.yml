@@ -140,7 +140,7 @@ phases:
 
   # The post-test phase contains commands that are run after your tests have completed.
   post_test:
-    commands:
+    commands: []
 
 # Artifacts are a list of paths on the filesystem where you can store test output and reports.
 artifacts:

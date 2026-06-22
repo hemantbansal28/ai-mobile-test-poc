@@ -1,0 +1,73 @@
+# AWS Device Farm custom test environment spec for Appium Node.js.
+#
+# IMPORTANT: In the "custom test environment" Device Farm does NOT auto-start
+# an Appium server. We install Appium ourselves with avm (the Appium Version
+# Manager that's pre-installed on the Device Farm host), install the
+# uiautomator2 driver, and launch Appium in the background in pre_test.
+#
+# The Device Farm Linux host already provides Node 18 and npm, so no nvm/Node
+# bootstrap is needed.
+#
+# Reference: https://docs.aws.amazon.com/devicefarm/latest/developerguide/test-types-appium.html
+
+version: 0.1
+
+phases:
+  install:
+    commands:
+      - node -v
+      - npm -v
+
+      # Install Appium 2 via avm (pre-installed on Device Farm hosts).
+      - export APPIUM_VERSION=2.11.4
+      - avm $APPIUM_VERSION
+      - appium --version
+
+      # Install the Android UiAutomator2 driver. Ignore "already installed" errors.
+      - appium driver install uiautomator2 || true
+      - appium driver list --installed
+
+      # Install our WebdriverIO test deps (bundle ships without node_modules).
+      - cd $DEVICEFARM_TEST_PACKAGE_PATH
+      - npm install --no-audit --no-fund --prefer-offline
+
+  pre_test:
+    commands:
+      # NOTE: each echo is single-quoted so YAML doesn't parse ": " as a mapping.
+      - 'echo "App under test : $DEVICEFARM_APP_PATH"'
+      - 'echo "Device platform: $DEVICEFARM_DEVICE_PLATFORM_NAME"'
+      - 'echo "Device name    : $DEVICEFARM_DEVICE_NAME"'
+      - 'echo "Device UDID    : $DEVICEFARM_DEVICE_UDID"'
+      - 'echo "OS version     : $DEVICEFARM_DEVICE_OS_VERSION"'
+
+      # Launch Appium in the background. Logs go into $DEVICEFARM_LOG_DIR so
+      # they show up as a downloadable artifact on the run page.
+      - appium --base-path / --log-timestamp --log-no-colors > $DEVICEFARM_LOG_DIR/appium.log 2>&1 &
+
+      # Wait up to 60s for Appium to start listening.
+      - >-
+          start_appium_timeout=0;
+          while true; do
+            if [ $start_appium_timeout -gt 60 ]; then
+              echo "Appium server failed to start within 60s";
+              tail -200 $DEVICEFARM_LOG_DIR/appium.log;
+              exit 1;
+            fi;
+            if grep -q "Appium REST http interface listener started" $DEVICEFARM_LOG_DIR/appium.log 2>/dev/null; then
+              echo "Appium is ready";
+              break;
+            fi;
+            sleep 1;
+            start_appium_timeout=$((start_appium_timeout+1));
+          done
+
+  test:
+    commands:
+      - cd $DEVICEFARM_TEST_PACKAGE_PATH
+      - npx wdio run ./wdio.devicefarm.conf.js
+
+  post_test:
+    commands: []
+
+artifacts:
+  - $DEVICEFARM_LOG_DIR
